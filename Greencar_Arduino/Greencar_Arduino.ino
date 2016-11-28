@@ -4,17 +4,18 @@
  Author:	roland.kunz
 */
 
+#include <Wire.h>
 #include <IRremote.h>
 
-int PinReceiveIR = 7;				//ARDUINO?7?------ L293D
+int PinReceiveIR = 7;	
 
 /******************************************************************************************
 * 
 ******************************************************************************************/
-int PinEnableLeftPositive = 14;		//ARDUINO?A0?------ L293D (L+?  
-int PinEnableLeftNegative = 15;		//ARDUINO?A1?------ L293D?L-?  
-int PinEnableRightPositive = 16;    //ARDUINO?A2?------ L293D?R+? 
-int PinEnableRightNegative = 17;    //ARDUINO?A3?------ L293D (R-?
+int PinEnableLeftPositive = 15;
+int PinEnableLeftNegative = 14;
+int PinEnableRightPositive = 17;
+int PinEnableRightNegative = 16;
 
 /******************************************************************************************
 * 
@@ -22,11 +23,13 @@ int PinEnableRightNegative = 17;    //ARDUINO?A3?------ L293D (R-?
 
 const long ReceivedValueForward = 0x00FF18E7;
 const long ReceivedValueBackward = 0x00FF4AB5;
-const long ReceivedValueLeft = 0x00FF5AA5;
+const long ReceivedValueLeft = 0x00FF10EF;
 const long ReceivedValueTurnLeft = 0x00FF30CF;
-const long ReceivedValueRight = 0x00FF10EF;
+const long ReceivedValueRight = 0x00FF5AA5;
 const long ReceivedValueTurnRight = 0x00FF7A85;
 const long ReceivedValueStop = 0x00FF38C7;
+
+String command = "stop";
 
 struct Drive {
 	char *name;
@@ -39,9 +42,9 @@ struct Drive {
 struct Drive driveLeftSide = { "Left", false, true, PinEnableLeftPositive, PinEnableLeftNegative };
 struct Drive driveRightSide = { "Right", false, true, PinEnableRightPositive, PinEnableRightNegative };
 
-
 IRrecv irrecv(PinReceiveIR);  //
 decode_results results;
+
 void dump(decode_results *results)
 {
 	if (results->decode_type == UNKNOWN)
@@ -63,87 +66,93 @@ void dump(decode_results *results)
 void setup()
 {
 	Serial.begin(9600);
+	pinMode(13, OUTPUT);
 	pinMode(PinReceiveIR, INPUT);
 	pinMode(PinEnableLeftPositive, OUTPUT);
 	pinMode(PinEnableLeftNegative, OUTPUT);
 	pinMode(PinEnableRightPositive, OUTPUT);
 	pinMode(PinEnableRightNegative, OUTPUT);
 	irrecv.enableIRIn(); // Start the receiver
+
+	Wire.begin(42);
+	Wire.onReceive(receiveEvent);
+	Wire.onRequest(requestEvent);
 }
 
-int on = 0;
+byte measureResult = 0;
+boolean isDataReceived = 0;
 unsigned long last = millis();
+
+void requestEvent(void)
+{
+	Wire.write(measureResult);
+}
+
+
+// function that executes whenever data is received from master
+// this function is registered as an event, see setup()
+void receiveEvent(int howMany) {
+	
+	//while (1 < Wire.available())	// loop through all but the last
+	//{								
+		command = Wire.readStringUntil('\n');
+	//}
+	//String command = String(receivedCommand).substring(0, howMany-1);
+
+	int x = Wire.read();			// receive byte as an integer
+	Serial.println(x);				// print the integer
+	
+	isDataReceived = true;
+}
 
 /******************************************************************************************
 * 
 ******************************************************************************************/
 void loop()
 {
+	if (isDataReceived)
+	{
+		SetDriveParameter(&driveLeftSide, command);
+		SetDriveParameter(&driveRightSide, command);
+		CallDrive(&driveLeftSide);
+		CallDrive(&driveRightSide);
+		isDataReceived = false;
+	}
+
 	if (irrecv.decode(&results))
 	{
 		if (millis() - last > 500)
 		{
-			on = !on;
-			digitalWrite(13, on ? HIGH : LOW);
 			dump(&results);
-		}
 
-		switch (results.value)
-		{
+			switch (results.value)
+			{
 			case ReceivedValueForward:
-				driveLeftSide.forward = true;
-				driveLeftSide.run = true;
-				Move(&driveLeftSide);
-				driveRightSide.forward = true;
-				driveRightSide.run = true;
-				Move(&driveRightSide);
+				command = "forward";
 				break;
 			case ReceivedValueBackward:
-				driveLeftSide.forward = false;
-				driveLeftSide.run = true;
-				Move(&driveLeftSide);
-				driveRightSide.forward = false;
-				driveRightSide.run = true;
-				Move(&driveRightSide);
+				command = "backward";
 				break;
 			case ReceivedValueLeft:
-				driveLeftSide.run = false;
-				Move(&driveLeftSide);
-				driveRightSide.forward = true;
-				driveRightSide.run = true;
-				Move(&driveRightSide);
 				break;
 			case ReceivedValueTurnLeft:
-				driveLeftSide.forward = false;
-				driveLeftSide.run = true;
-				Move(&driveLeftSide);
-				driveRightSide.forward = true;
-				driveRightSide.run = true;
-				Move(&driveRightSide);
+				command = "turnleft";
 				break;
 			case ReceivedValueRight:
-				driveLeftSide.forward = true;
-				driveLeftSide.run = true;
-				Move(&driveLeftSide);
-				driveRightSide.run = false;
-				Move(&driveRightSide);
+				command = "right";
 				break;
 			case ReceivedValueTurnRight:
-				driveLeftSide.forward = true;
-				driveLeftSide.run = true;
-				Move(&driveLeftSide);
-				driveRightSide.forward = false;
-				driveRightSide.run = true;
-				Move(&driveRightSide);
-				break;
-			case ReceivedValueStop:
-				driveLeftSide.run = false;
-				Move(&driveLeftSide);
-				driveRightSide.run = false;
-				Move(&driveRightSide);
+				command = "turnright";
 				break;
 			default:
+				command = "stop";
 				break;
+			}
+
+			SetDriveParameter(&driveLeftSide, command);
+			SetDriveParameter(&driveRightSide, command);
+			CallDrive(&driveLeftSide);
+			CallDrive(&driveRightSide);
 		}
 
 		last = millis();
@@ -151,32 +160,103 @@ void loop()
 	}
 }
 
-void Move(struct Drive* drive)
+void SetDriveParameter(struct Drive* drive, String command)
 {
-	if ((*drive).run)
+	if (command.equals("forward"))
 	{
-		if ((*drive).forward)
+		drive->run = true;
+		drive->forward = true;
+	}
+	else if (command.equals("backward"))
+	{
+		drive->run = true;
+		drive->forward = false;
+	}
+	else if (command.equals("left"))
+	{
+		if (drive->name == "Left")
 		{
-			digitalWrite((*drive).pinForward, LOW);
-			digitalWrite((*drive).pinBackward, HIGH);
-			Serial.print((*drive).name);
+			drive->run = false;
+		}
+		else
+		{
+			drive->run = true;
+		}
+
+		drive->forward = true;
+	}
+	else if (command.equals("right"))
+	{
+		if (drive->name == "Right")
+		{
+			drive->run = false;
+		}
+		else
+		{
+			drive->run = true;
+		}
+
+		drive->forward = true;
+	}
+	else if (command.equals("turnleft"))
+	{
+		if (drive->name == "Left")
+		{
+			drive->forward = false;
+		}
+		else
+		{
+			drive->forward = true;
+		}
+
+		drive->run = true;
+	}
+	else if (command.equals("turnright"))
+	{
+		if (drive->name == "Right")
+		{
+			drive->forward = false;
+		}
+		else
+		{
+			drive->forward = true;
+		}
+
+		drive->run = true;
+	}
+	else
+	{
+		driveLeftSide.run = false;
+		driveRightSide.run = false;
+	}
+}
+
+void CallDrive(struct Drive* drive)
+{
+	if (drive->run)
+	{
+		if (drive->forward)
+		{
+			digitalWrite(drive->pinForward, LOW);
+			digitalWrite(drive->pinBackward, HIGH);
+			Serial.print(drive->name);
 			Serial.print(": ");
 			Serial.println("Move Forward");
 		}
 		else
 		{
-			digitalWrite((*drive).pinForward, HIGH);
-			digitalWrite((*drive).pinBackward, LOW);
-			Serial.print((*drive).name);
+			digitalWrite(drive->pinForward, HIGH);
+			digitalWrite(drive->pinBackward, LOW);
+			Serial.print(drive->name);
 			Serial.print(": ");
 			Serial.println("Move Backward");
 		}
 	}
 	else
 	{
-		digitalWrite((*drive).pinForward, HIGH);
-		digitalWrite((*drive).pinBackward, HIGH);
-		Serial.print((*drive).name);
+		digitalWrite(drive->pinForward, HIGH);
+		digitalWrite(drive->pinBackward, HIGH);
+		Serial.print(drive->name);
 		Serial.print(": ");
 		Serial.println("Stop");
 	}
